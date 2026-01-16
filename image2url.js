@@ -60,25 +60,44 @@ export default {
             if (file) uploadFile(file);
         }, [uploadFile]);
 
-        // Compact inline UI
-        return React.createElement("label", {
-            className: `border-2 border-dashed rounded-xl p-4 flex items-center justify-center cursor-pointer transition-all ${isDragging ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin"
-                } ${isUploading ? "opacity-50 pointer-events-none" : ""}`,
-            onDragOver: (e) => { e.preventDefault(); setIsDragging(true); },
-            onDragLeave: () => setIsDragging(false),
-            onDrop: handleDrop,
-        },
-            React.createElement("input", {
-                type: "file",
-                accept: "image/*",
-                onChange: handleFileChange,
-                className: "hidden"
-            }),
-            React.createElement("div", { className: "text-center" },
-                isUploading
-                    ? React.createElement("span", { className: "text-sm text-content-muted" }, "⏳ Yükleniyor...")
-                    : React.createElement("span", { className: "text-sm text-content-muted" }, "📷 Sürükle veya tıkla"),
-                error && React.createElement("p", { className: "text-xs text-red-500 mt-1" }, error)
+        // Full Form Section UI
+        return React.createElement("div", { className: "mb-4" },
+            React.createElement("label", { className: "text-sm font-medium block mb-2 text-content-secondary" }, "Soru Görseli"),
+
+            // Upload Area
+            React.createElement("label", {
+                className: `border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all mb-3 ${isDragging ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin"
+                    } ${isUploading ? "opacity-50 pointer-events-none" : ""}`,
+                onDragOver: (e) => { e.preventDefault(); setIsDragging(true); },
+                onDragLeave: () => setIsDragging(false),
+                onDrop: handleDrop,
+            },
+                React.createElement("input", {
+                    type: "file",
+                    accept: "image/*",
+                    onChange: handleFileChange,
+                    className: "hidden"
+                }),
+                React.createElement("div", { className: "text-center" },
+                    isUploading
+                        ? React.createElement("span", { className: "text-sm text-content-muted" }, "⏳ Yükleniyor...")
+                        : React.createElement("div", { className: "flex flex-col items-center gap-1" },
+                            React.createElement("span", { className: "text-2xl" }, "🖼️"),
+                            React.createElement("span", { className: "text-sm font-medium text-content-primary" }, "Görsel Yükle"),
+                            React.createElement("span", { className: "text-xs text-content-muted" }, "veya buraya sürükleyin")
+                        ),
+                    error && React.createElement("p", { className: "text-xs text-red-500 mt-2" }, error)
+                )
+            ),
+
+            // Manual URL Input Fallback
+            React.createElement("div", { className: "relative" },
+                React.createElement("input", {
+                    type: "url",
+                    placeholder: "veya görsel bağlantısı yapıştırın",
+                    onChange: (e) => onValue(e.target.value),
+                    className: "w-full px-4 py-3 rounded-xl border text-sm bg-surface-primary border-outline text-content-primary focus:border-accent-admin outline-none transition-colors"
+                })
             )
         );
     },
