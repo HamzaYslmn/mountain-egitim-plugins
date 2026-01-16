@@ -24,40 +24,46 @@ const upload = async (file, onValue, setLoading, setError) => {
 export default {
     name: "Image2URL",
     description: "Görsel yükleyip URL alın",
-    version: "2.0.0",
+    version: "2.0.1",
     author: "Anonymous",
     icon: "🖼️",
     slots: ["image-input"],
 
     // MARK: Slot Render (Form Inline)
     renderSlot: ({ onValue }) => {
-        const { useState, useCallback } = window.React;
+        const React = window.React;
+        const { useState, useCallback } = React;
         const [loading, setLoading] = useState(false);
         const [error, setError] = useState(null);
         const [drag, setDrag] = useState(false);
 
         const onFile = useCallback(f => upload(f, onValue, setLoading, setError), [onValue]);
 
-        return window.React.createElement("div", { className: "space-y-3" },
+        const dragStyle = drag ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin/50";
+        const loadingStyle = loading ? "opacity-50 pointer-events-none" : "";
+
+        return React.createElement("div", { style: { marginBottom: "16px" } },
             // Label
-            window.React.createElement("span", { className: "text-sm font-medium text-content-secondary" }, "Soru Görseli"),
+            React.createElement("label", {
+                className: "text-sm font-medium text-content-secondary",
+                style: { display: "block", marginBottom: "8px" }
+            }, "Soru Görseli"),
 
             // Drop Zone
-            window.React.createElement("label", {
-                className: `flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all
-                    ${drag ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin/50"}
-                    ${loading ? "opacity-50 pointer-events-none" : ""}`,
+            React.createElement("label", {
+                className: `border-2 border-dashed rounded-xl cursor-pointer transition-all ${dragStyle} ${loadingStyle}`,
+                style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", padding: "24px", marginBottom: "12px" },
                 onDragOver: e => { e.preventDefault(); setDrag(true); },
                 onDragLeave: () => setDrag(false),
                 onDrop: e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer?.files?.[0]; if (f?.type?.startsWith("image/")) onFile(f); }
             },
-                window.React.createElement("input", { type: "file", accept: "image/*", className: "hidden", onChange: e => onFile(e.target.files?.[0]) }),
-                window.React.createElement("span", { className: "text-3xl" }, loading ? "⏳" : "📷"),
-                window.React.createElement("span", { className: "text-sm text-content-muted" }, loading ? "Yükleniyor..." : "Sürükle veya tıkla")
+                React.createElement("input", { type: "file", accept: "image/*", style: { display: "none" }, onChange: e => onFile(e.target.files?.[0]) }),
+                React.createElement("span", { style: { fontSize: "28px" } }, loading ? "⏳" : "📷"),
+                React.createElement("span", { className: "text-sm text-content-muted" }, loading ? "Yükleniyor..." : "Sürükle veya tıkla")
             ),
 
             // URL Input
-            window.React.createElement("input", {
+            React.createElement("input", {
                 type: "url",
                 placeholder: "veya URL yapıştır",
                 onChange: e => onValue(e.target.value),
@@ -65,13 +71,17 @@ export default {
             }),
 
             // Error
-            error && window.React.createElement("p", { className: "text-xs text-red-500" }, error)
+            error && React.createElement("p", {
+                className: "text-xs text-red-500",
+                style: { marginTop: "8px" }
+            }, error)
         );
     },
 
     // MARK: Modal Render (Standalone)
     render: ({ onClose }) => {
-        const { useState } = window.React;
+        const React = window.React;
+        const { useState } = React;
         const [file, setFile] = useState(null);
         const [preview, setPreview] = useState(null);
         const [loading, setLoading] = useState(false);
@@ -83,32 +93,40 @@ export default {
             if (f) { setFile(f); setPreview(URL.createObjectURL(f)); setResult(null); setError(null); }
         };
 
-        return window.React.createElement("div", { className: "flex flex-col gap-4" },
+        return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "16px" } },
             // Upload Area
-            window.React.createElement("label", { className: "flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed border-outline hover:border-accent-admin cursor-pointer transition-colors" },
-                window.React.createElement("input", { type: "file", accept: "image/*", className: "hidden", onChange: pick }),
+            React.createElement("label", {
+                className: "border-2 border-dashed border-outline rounded-xl hover:border-accent-admin cursor-pointer transition-colors",
+                style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px" }
+            },
+                React.createElement("input", { type: "file", accept: "image/*", style: { display: "none" }, onChange: pick }),
                 preview
-                    ? window.React.createElement("img", { src: preview, className: "max-h-40 rounded-lg object-contain" })
-                    : window.React.createElement("div", { className: "text-center" },
-                        window.React.createElement("span", { className: "text-4xl block mb-2" }, "📷"),
-                        window.React.createElement("span", { className: "text-sm text-content-muted" }, "Görsel seç")
+                    ? React.createElement("img", { src: preview, style: { maxHeight: "160px", borderRadius: "8px", objectFit: "contain" } })
+                    : React.createElement("div", { style: { textAlign: "center" } },
+                        React.createElement("span", { style: { fontSize: "40px", display: "block", marginBottom: "8px" } }, "📷"),
+                        React.createElement("span", { className: "text-sm text-content-muted" }, "Görsel seç")
                     )
             ),
 
             // Upload Button
-            file && !result && window.React.createElement("button", {
+            file && !result && React.createElement("button", {
                 onClick: () => upload(file, setResult, setLoading, setError),
                 disabled: loading,
                 className: "w-full py-3 rounded-lg text-sm font-semibold text-white bg-accent-admin hover:brightness-110 disabled:opacity-50 transition-all cursor-pointer"
             }, loading ? "⏳ Yükleniyor..." : "Yükle"),
 
             // Error
-            error && window.React.createElement("p", { className: "text-sm text-red-500 text-center" }, error),
+            error && React.createElement("p", { className: "text-sm text-red-500", style: { textAlign: "center" } }, error),
 
             // Result
-            result && window.React.createElement("div", { className: "flex gap-2" },
-                window.React.createElement("input", { type: "text", value: result, readOnly: true, className: "flex-1 px-3 py-2 rounded-lg border border-outline bg-surface-primary text-sm" }),
-                window.React.createElement("button", {
+            result && React.createElement("div", { style: { display: "flex", gap: "8px" } },
+                React.createElement("input", {
+                    type: "text",
+                    value: result,
+                    readOnly: true,
+                    className: "flex-1 px-3 py-2 rounded-lg border border-outline bg-surface-primary text-sm"
+                }),
+                React.createElement("button", {
                     onClick: () => navigator.clipboard.writeText(result),
                     className: "px-4 py-2 rounded-lg text-sm font-medium bg-accent-admin/10 text-accent-admin hover:bg-accent-admin/20 transition-colors cursor-pointer"
                 }, "📋")
