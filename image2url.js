@@ -1,7 +1,7 @@
-// MARK: Image2URL Plugin - Upload Only
+// MARK: Image2URL Plugin - Preview First, Then Upload
 const API_URL = "https://www.image2url.com/api/upload";
 
-const upload = async (file, onValue, setLoading, setError) => {
+const upload = async (file, onSuccess, setLoading, setError) => {
     if (!file) return;
     setLoading(true);
     setError(null);
@@ -12,7 +12,7 @@ const upload = async (file, onValue, setLoading, setError) => {
         if (!res.ok) throw new Error("Yükleme başarısız");
         const data = await res.json();
         const url = data.url || data.link || data.imageUrl;
-        if (url) onValue(url);
+        if (url) onSuccess(url);
         else throw new Error("URL alınamadı");
     } catch (e) {
         setError(e.message);
@@ -24,43 +24,90 @@ const upload = async (file, onValue, setLoading, setError) => {
 export default {
     name: "Image2URL",
     description: "Görsel yükleyip URL alın",
-    version: "2.1.0",
+    version: "2.2.0",
     author: "Anonymous",
     icon: "🖼️",
     slots: ["image-input"],
 
-    // MARK: Slot Render - Upload only, no URL input (host handles that)
+    // MARK: Slot Render - Preview first, then upload
     renderSlot: ({ onValue }) => {
         const React = window.React;
         const { useState, useCallback } = React;
+        const [file, setFile] = useState(null);
+        const [preview, setPreview] = useState(null);
         const [loading, setLoading] = useState(false);
         const [error, setError] = useState(null);
         const [drag, setDrag] = useState(false);
 
-        const onFile = useCallback(f => upload(f, onValue, setLoading, setError), [onValue]);
+        const onSelect = useCallback(f => {
+            if (!f) return;
+            setFile(f);
+            setPreview(URL.createObjectURL(f));
+            setError(null);
+        }, []);
+
+        const onUpload = useCallback(() => {
+            upload(file, (url) => {
+                onValue(url);
+                setFile(null);
+                setPreview(null);
+            }, setLoading, setError);
+        }, [file, onValue]);
+
+        const onClear = useCallback(() => {
+            setFile(null);
+            setPreview(null);
+            setError(null);
+        }, []);
 
         const dragStyle = drag ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin/50";
-        const loadingStyle = loading ? "opacity-50 pointer-events-none" : "";
 
-        return React.createElement("div", { style: { marginBottom: "12px" } },
-            // Drop Zone only - no label, no URL input
-            React.createElement("label", {
-                className: `border-2 border-dashed rounded-xl cursor-pointer transition-all ${dragStyle} ${loadingStyle}`,
-                style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", padding: "20px" },
-                onDragOver: e => { e.preventDefault(); setDrag(true); },
-                onDragLeave: () => setDrag(false),
-                onDrop: e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer?.files?.[0]; if (f?.type?.startsWith("image/")) onFile(f); }
+        return React.createElement("div", { style: { marginTop: "12px" } },
+            // Preview Mode
+            preview ? React.createElement("div", {
+                style: { display: "flex", flexDirection: "column", gap: "12px" }
             },
-                React.createElement("input", { type: "file", accept: "image/*", style: { display: "none" }, onChange: e => onFile(e.target.files?.[0]) }),
-                React.createElement("span", { style: { fontSize: "24px" } }, loading ? "⏳" : "📷"),
-                React.createElement("span", { className: "text-sm text-content-muted" }, loading ? "Yükleniyor..." : "Görsel yükle")
-            ),
-            // Error only
+                // Preview Image
+                React.createElement("div", {
+                    className: "rounded-xl border border-outline overflow-hidden bg-surface-tertiary/30",
+                    style: { padding: "8px", position: "relative" }
+                },
+                    React.createElement("img", {
+                        src: preview,
+                        style: { width: "100%", height: "120px", objectFit: "contain", borderRadius: "8px" }
+                    }),
+                    // Clear button
+                    !loading && React.createElement("button", {
+                        onClick: onClear,
+                        className: "text-white hover:bg-red-500 transition-colors",
+                        style: { position: "absolute", top: "12px", right: "12px", padding: "4px 8px", borderRadius: "9999px", background: "rgba(0,0,0,0.5)", fontSize: "12px", cursor: "pointer", border: "none" }
+                    }, "✕")
+                ),
+                // Upload Button
+                React.createElement("button", {
+                    onClick: onUpload,
+                    disabled: loading,
+                    className: "w-full py-2.5 rounded-lg text-sm font-semibold text-white bg-accent-admin hover:brightness-110 disabled:opacity-50 transition-all cursor-pointer"
+                }, loading ? "⏳ Yükleniyor..." : "📤 Yükle")
+            )
+                // Drop Zone (no preview)
+                : React.createElement("label", {
+                    className: `border-2 border-dashed rounded-xl cursor-pointer transition-all ${dragStyle}`,
+                    style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "6px", padding: "16px" },
+                    onDragOver: e => { e.preventDefault(); setDrag(true); },
+                    onDragLeave: () => setDrag(false),
+                    onDrop: e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer?.files?.[0]; if (f?.type?.startsWith("image/")) onSelect(f); }
+                },
+                    React.createElement("input", { type: "file", accept: "image/*", style: { display: "none" }, onChange: e => onSelect(e.target.files?.[0]) }),
+                    React.createElement("span", { style: { fontSize: "20px" } }, "📷"),
+                    React.createElement("span", { className: "text-xs text-content-muted" }, "Görsel seç")
+                ),
+            // Error
             error && React.createElement("p", { className: "text-xs text-red-500", style: { marginTop: "8px" } }, error)
         );
     },
 
-    // MARK: Modal Render (Standalone)
+    // MARK: Modal Render (Standalone) - Same flow
     render: ({ onClose }) => {
         const React = window.React;
         const { useState } = React;
