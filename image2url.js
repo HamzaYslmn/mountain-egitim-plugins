@@ -1,332 +1,117 @@
-// MARK: Image2URL Plugin
-// Standalone plugin for uploading images and getting shareable URLs.
-// Registers for "image-input" slot to appear in forms.
-
+// MARK: Image2URL Plugin - Minimalist Design
 const API_URL = "https://www.image2url.com/api/upload";
+
+const upload = async (file, onValue, setLoading, setError) => {
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch(API_URL, { method: "POST", body: fd });
+        if (!res.ok) throw new Error("Yükleme başarısız");
+        const data = await res.json();
+        const url = data.url || data.link || data.imageUrl;
+        if (url) onValue(url);
+        else throw new Error("URL alınamadı");
+    } catch (e) {
+        setError(e.message);
+    } finally {
+        setLoading(false);
+    }
+};
 
 export default {
     name: "Image2URL",
     description: "Görsel yükleyip URL alın",
-    version: "1.0.0",
+    version: "2.0.0",
     author: "Anonymous",
     icon: "🖼️",
     slots: ["image-input"],
 
-    // MARK: Render in Slot (inline in forms)
-    renderSlot: ({ slotId, onValue }) => {
-        const React = window.React;
-        const { useState, useCallback } = React;
-
-        const [isDragging, setIsDragging] = useState(false);
-        const [isUploading, setIsUploading] = useState(false);
+    // MARK: Slot Render (Form Inline)
+    renderSlot: ({ onValue }) => {
+        const { useState, useCallback } = window.React;
+        const [loading, setLoading] = useState(false);
         const [error, setError] = useState(null);
-        const [uploadProgress, setUploadProgress] = useState(0);
+        const [drag, setDrag] = useState(false);
 
-        const uploadFile = useCallback(async (file) => {
-            if (!file) return;
-            setIsUploading(true);
-            setError(null);
-            setUploadProgress(0);
+        const onFile = useCallback(f => upload(f, onValue, setLoading, setError), [onValue]);
 
-            // Simulate progress for better UX
-            const progressInterval = setInterval(() => {
-                setUploadProgress(prev => Math.min(prev + 10, 90));
-            }, 150);
+        return window.React.createElement("div", { className: "space-y-3" },
+            // Label
+            window.React.createElement("span", { className: "text-sm font-medium text-content-secondary" }, "Soru Görseli"),
 
-            try {
-                const formData = new FormData();
-                formData.append("file", file);
-
-                const response = await fetch(API_URL, {
-                    method: "POST",
-                    body: formData,
-                });
-
-                clearInterval(progressInterval);
-                setUploadProgress(100);
-
-                if (!response.ok) throw new Error("Yükleme başarısız");
-
-                const data = await response.json();
-                const url = data.url || data.link || data.imageUrl;
-                if (url) {
-                    setTimeout(() => onValue(url), 300);
-                }
-                else throw new Error("URL alınamadı");
-            } catch (err) {
-                clearInterval(progressInterval);
-                setError(err.message);
-                setUploadProgress(0);
-            } finally {
-                setTimeout(() => {
-                    setIsUploading(false);
-                    setUploadProgress(0);
-                }, 500);
-            }
-        }, [onValue]);
-
-        const handleDrop = useCallback((e) => {
-            e.preventDefault();
-            setIsDragging(false);
-            const file = e.dataTransfer?.files?.[0];
-            if (file?.type?.startsWith("image/")) uploadFile(file);
-        }, [uploadFile]);
-
-        const handleFileChange = useCallback((e) => {
-            const file = e.target.files?.[0];
-            if (file) uploadFile(file);
-        }, [uploadFile]);
-
-        // MARK: Modern Premium UI
-        return React.createElement("div", { className: "space-y-3" },
-            // Section Label
-            React.createElement("label", {
-                className: "text-sm font-semibold block text-content-secondary flex items-center gap-2"
+            // Drop Zone
+            window.React.createElement("label", {
+                className: `flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all
+                    ${drag ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin/50"}
+                    ${loading ? "opacity-50 pointer-events-none" : ""}`,
+                onDragOver: e => { e.preventDefault(); setDrag(true); },
+                onDragLeave: () => setDrag(false),
+                onDrop: e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer?.files?.[0]; if (f?.type?.startsWith("image/")) onFile(f); }
             },
-                React.createElement("span", { className: "text-base" }, "🖼️"),
-                "Soru Görseli"
+                window.React.createElement("input", { type: "file", accept: "image/*", className: "hidden", onChange: e => onFile(e.target.files?.[0]) }),
+                window.React.createElement("span", { className: "text-3xl" }, loading ? "⏳" : "📷"),
+                window.React.createElement("span", { className: "text-sm text-content-muted" }, loading ? "Yükleniyor..." : "Sürükle veya tıkla")
             ),
 
-            // Upload Area - Modern Glassmorphism Style
-            React.createElement("label", {
-                style: {
-                    background: isDragging
-                        ? "linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(59, 130, 246, 0.1) 100%)"
-                        : "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)",
-                    backdropFilter: "blur(8px)",
-                    border: isDragging ? "2px solid rgba(139, 92, 246, 0.6)" : "2px dashed rgba(255,255,255,0.15)",
-                    borderRadius: "16px",
-                    padding: "28px 20px",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: isUploading ? "wait" : "pointer",
-                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    position: "relative",
-                    overflow: "hidden",
-                    opacity: isUploading ? 0.7 : 1
-                },
-                onDragOver: (e) => { e.preventDefault(); setIsDragging(true); },
-                onDragLeave: () => setIsDragging(false),
-                onDrop: handleDrop,
-            },
-                // Progress Bar Overlay
-                isUploading && React.createElement("div", {
-                    style: {
-                        position: "absolute",
-                        bottom: 0,
-                        left: 0,
-                        height: "4px",
-                        width: `${uploadProgress}%`,
-                        background: "linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%)",
-                        borderRadius: "0 2px 2px 0",
-                        transition: "width 0.2s ease"
-                    }
-                }),
+            // URL Input
+            window.React.createElement("input", {
+                type: "url",
+                placeholder: "veya URL yapıştır",
+                onChange: e => onValue(e.target.value),
+                className: "w-full px-4 py-2.5 rounded-lg border border-outline bg-surface-primary text-sm text-content-primary focus:border-accent-admin outline-none transition-colors"
+            }),
 
-                // Hidden File Input
-                React.createElement("input", {
-                    type: "file",
-                    accept: "image/*",
-                    onChange: handleFileChange,
-                    style: { display: "none" }
-                }),
-
-                // Content
-                React.createElement("div", {
-                    style: {
-                        textAlign: "center",
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        gap: "8px"
-                    }
-                },
-                    isUploading
-                        ? React.createElement(React.Fragment, null,
-                            // Animated Spinner
-                            React.createElement("div", {
-                                style: {
-                                    width: "40px",
-                                    height: "40px",
-                                    border: "3px solid rgba(139, 92, 246, 0.2)",
-                                    borderTopColor: "#8B5CF6",
-                                    borderRadius: "50%",
-                                    animation: "spin 0.8s linear infinite"
-                                }
-                            }),
-                            React.createElement("span", {
-                                style: {
-                                    fontSize: "13px",
-                                    fontWeight: 500,
-                                    color: "rgba(255,255,255,0.7)",
-                                    marginTop: "4px"
-                                }
-                            }, `Yükleniyor... ${uploadProgress}%`)
-                        )
-                        : React.createElement(React.Fragment, null,
-                            // Upload Icon with gradient background
-                            React.createElement("div", {
-                                style: {
-                                    width: "56px",
-                                    height: "56px",
-                                    borderRadius: "14px",
-                                    background: "linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(59, 130, 246, 0.15) 100%)",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    marginBottom: "4px"
-                                }
-                            },
-                                React.createElement("span", { style: { fontSize: "24px" } }, "�")
-                            ),
-                            React.createElement("span", {
-                                style: {
-                                    fontSize: "14px",
-                                    fontWeight: 600,
-                                    color: "rgba(255,255,255,0.9)"
-                                }
-                            }, "Görsel Yükle"),
-                            React.createElement("span", {
-                                style: {
-                                    fontSize: "12px",
-                                    color: "rgba(255,255,255,0.5)"
-                                }
-                            }, "Tıklayın veya sürükleyip bırakın")
-                        ),
-
-                    // Error Message
-                    error && React.createElement("div", {
-                        style: {
-                            marginTop: "8px",
-                            padding: "8px 12px",
-                            borderRadius: "8px",
-                            background: "rgba(239, 68, 68, 0.15)",
-                            border: "1px solid rgba(239, 68, 68, 0.3)"
-                        }
-                    },
-                        React.createElement("span", {
-                            style: { fontSize: "12px", color: "#EF4444" }
-                        }, `❌ ${error}`)
-                    )
-                )
-            ),
-
-            // Manual URL Input - Sleek Design
-            React.createElement("div", {
-                style: {
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center"
-                }
-            },
-                React.createElement("div", {
-                    style: {
-                        position: "absolute",
-                        left: "14px",
-                        color: "rgba(255,255,255,0.4)",
-                        fontSize: "14px",
-                        pointerEvents: "none"
-                    }
-                }, "🔗"),
-                React.createElement("input", {
-                    type: "url",
-                    placeholder: "veya görsel URL'si yapıştırın",
-                    onChange: (e) => onValue(e.target.value),
-                    style: {
-                        width: "100%",
-                        padding: "14px 14px 14px 40px",
-                        borderRadius: "12px",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        background: "rgba(255,255,255,0.03)",
-                        color: "rgba(255,255,255,0.9)",
-                        fontSize: "13px",
-                        outline: "none",
-                        transition: "all 0.2s ease"
-                    }
-                })
-            ),
-
-            // CSS Keyframes for spinner animation
-            React.createElement("style", null, `
-                @keyframes spin {
-                    to { transform: rotate(360deg); }
-                }
-            `)
+            // Error
+            error && window.React.createElement("p", { className: "text-xs text-red-500" }, error)
         );
     },
 
-    // MARK: Render in Modal (standalone)
+    // MARK: Modal Render (Standalone)
     render: ({ onClose }) => {
-        const React = window.React;
-        const { useState } = React;
-
+        const { useState } = window.React;
         const [file, setFile] = useState(null);
         const [preview, setPreview] = useState(null);
-        const [isUploading, setIsUploading] = useState(false);
-        const [resultUrl, setResultUrl] = useState(null);
+        const [loading, setLoading] = useState(false);
+        const [result, setResult] = useState(null);
         const [error, setError] = useState(null);
 
-        const handleFileChange = (e) => {
-            const selectedFile = e.target.files?.[0];
-            if (selectedFile) {
-                setFile(selectedFile);
-                setPreview(URL.createObjectURL(selectedFile));
-                setResultUrl(null);
-                setError(null);
-            }
+        const pick = e => {
+            const f = e.target.files?.[0];
+            if (f) { setFile(f); setPreview(URL.createObjectURL(f)); setResult(null); setError(null); }
         };
 
-        const handleUpload = async () => {
-            if (!file) return;
-            setIsUploading(true);
-            setError(null);
-
-            try {
-                const formData = new FormData();
-                formData.append("file", file);
-
-                const response = await fetch(API_URL, {
-                    method: "POST",
-                    body: formData,
-                });
-
-                if (!response.ok) throw new Error("Yükleme başarısız");
-
-                const data = await response.json();
-                setResultUrl(data.url || data.link || data.imageUrl || "URL bulunamadı");
-            } catch (err) {
-                setError(err.message);
-            } finally {
-                setIsUploading(false);
-            }
-        };
-
-        return React.createElement("div", { className: "flex flex-col gap-4" },
-            React.createElement("label", {
-                className: "border-2 border-dashed border-outline rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer hover:border-accent-admin transition-colors"
-            },
-                React.createElement("input", { type: "file", accept: "image/*", onChange: handleFileChange, className: "hidden" }),
+        return window.React.createElement("div", { className: "flex flex-col gap-4" },
+            // Upload Area
+            window.React.createElement("label", { className: "flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed border-outline hover:border-accent-admin cursor-pointer transition-colors" },
+                window.React.createElement("input", { type: "file", accept: "image/*", className: "hidden", onChange: pick }),
                 preview
-                    ? React.createElement("img", { src: preview, alt: "Preview", className: "max-h-48 rounded-lg object-contain" })
-                    : React.createElement("div", { className: "text-center" },
-                        React.createElement("span", { className: "text-4xl mb-2 block" }, "📷"),
-                        React.createElement("span", { className: "text-sm text-content-muted" }, "Görsel seçmek için tıklayın")
+                    ? window.React.createElement("img", { src: preview, className: "max-h-40 rounded-lg object-contain" })
+                    : window.React.createElement("div", { className: "text-center" },
+                        window.React.createElement("span", { className: "text-4xl block mb-2" }, "📷"),
+                        window.React.createElement("span", { className: "text-sm text-content-muted" }, "Görsel seç")
                     )
             ),
-            file && !resultUrl && React.createElement("button", {
-                onClick: handleUpload,
-                disabled: isUploading,
-                className: "w-full py-3 rounded-lg text-sm font-bold text-white cursor-pointer bg-accent-admin hover:brightness-110 disabled:opacity-50 transition-all"
-            }, isUploading ? "Yükleniyor..." : "Yükle"),
-            error && React.createElement("p", { className: "text-sm text-red-500 text-center" }, error),
-            resultUrl && React.createElement("div", { className: "flex flex-col gap-2" },
-                React.createElement("input", { type: "text", value: resultUrl, readOnly: true, className: "w-full px-4 py-3 rounded-lg border text-sm bg-surface-primary border-outline text-content-primary" }),
-                React.createElement("button", {
-                    onClick: () => navigator.clipboard.writeText(resultUrl),
-                    className: "w-full py-2 rounded-lg text-sm font-bold cursor-pointer bg-accent-admin/10 text-accent-admin hover:bg-accent-admin/20 transition-all"
-                }, "📋 Kopyala")
+
+            // Upload Button
+            file && !result && window.React.createElement("button", {
+                onClick: () => upload(file, setResult, setLoading, setError),
+                disabled: loading,
+                className: "w-full py-3 rounded-lg text-sm font-semibold text-white bg-accent-admin hover:brightness-110 disabled:opacity-50 transition-all cursor-pointer"
+            }, loading ? "⏳ Yükleniyor..." : "Yükle"),
+
+            // Error
+            error && window.React.createElement("p", { className: "text-sm text-red-500 text-center" }, error),
+
+            // Result
+            result && window.React.createElement("div", { className: "flex gap-2" },
+                window.React.createElement("input", { type: "text", value: result, readOnly: true, className: "flex-1 px-3 py-2 rounded-lg border border-outline bg-surface-primary text-sm" }),
+                window.React.createElement("button", {
+                    onClick: () => navigator.clipboard.writeText(result),
+                    className: "px-4 py-2 rounded-lg text-sm font-medium bg-accent-admin/10 text-accent-admin hover:bg-accent-admin/20 transition-colors cursor-pointer"
+                }, "📋")
             )
         );
     }
