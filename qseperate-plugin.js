@@ -2,7 +2,7 @@ export default {
     name: "Soru Ayrıştırma",
     description: "PDF ve görsellerden soru ayrıştırma aracı",
     version: "1.0.0",
-    author: "MountainAI",
+    author: "Anonymous",
     icon: "✂️",
 
     render: ({ onClose }) => {
