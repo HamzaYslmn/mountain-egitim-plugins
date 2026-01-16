@@ -1,18 +1,89 @@
 // MARK: Image2URL Plugin
-// This is a standalone plugin that can be loaded via URL into the MountainAI platform.
-// Users can upload images and get a shareable URL.
+// Standalone plugin for uploading images and getting shareable URLs.
+// Registers for "image-input" slot to appear in forms.
 
 const API_URL = "https://www.image2url.com/api/upload";
 
-// MARK: Plugin Definition
 export default {
     name: "Image2URL",
     description: "Görsel yükleyip URL alın",
     version: "1.0.0",
-    author: "MountainAI",
+    author: "Anonymous",
     icon: "🖼️",
+    slots: ["image-input"],
 
-    // MARK: Render Function
+    // MARK: Render in Slot (inline in forms)
+    renderSlot: ({ slotId, onValue }) => {
+        const React = window.React;
+        const { useState, useCallback } = React;
+
+        const [isDragging, setIsDragging] = useState(false);
+        const [isUploading, setIsUploading] = useState(false);
+        const [error, setError] = useState(null);
+
+        const uploadFile = useCallback(async (file) => {
+            if (!file) return;
+            setIsUploading(true);
+            setError(null);
+
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
+
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    body: formData,
+                });
+
+                if (!response.ok) throw new Error("Yükleme başarısız");
+
+                const data = await response.json();
+                const url = data.url || data.link || data.imageUrl;
+                if (url) onValue(url);
+                else throw new Error("URL alınamadı");
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setIsUploading(false);
+            }
+        }, [onValue]);
+
+        const handleDrop = useCallback((e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            const file = e.dataTransfer?.files?.[0];
+            if (file?.type?.startsWith("image/")) uploadFile(file);
+        }, [uploadFile]);
+
+        const handleFileChange = useCallback((e) => {
+            const file = e.target.files?.[0];
+            if (file) uploadFile(file);
+        }, [uploadFile]);
+
+        // Compact inline UI
+        return React.createElement("label", {
+            className: `border-2 border-dashed rounded-xl p-4 flex items-center justify-center cursor-pointer transition-all ${isDragging ? "border-accent-admin bg-accent-admin/5" : "border-outline hover:border-accent-admin"
+                } ${isUploading ? "opacity-50 pointer-events-none" : ""}`,
+            onDragOver: (e) => { e.preventDefault(); setIsDragging(true); },
+            onDragLeave: () => setIsDragging(false),
+            onDrop: handleDrop,
+        },
+            React.createElement("input", {
+                type: "file",
+                accept: "image/*",
+                onChange: handleFileChange,
+                className: "hidden"
+            }),
+            React.createElement("div", { className: "text-center" },
+                isUploading
+                    ? React.createElement("span", { className: "text-sm text-content-muted" }, "⏳ Yükleniyor...")
+                    : React.createElement("span", { className: "text-sm text-content-muted" }, "📷 Sürükle veya tıkla"),
+                error && React.createElement("p", { className: "text-xs text-red-500 mt-1" }, error)
+            )
+        );
+    },
+
+    // MARK: Render in Modal (standalone)
     render: ({ onClose }) => {
         const React = window.React;
         const { useState } = React;
@@ -47,94 +118,42 @@ export default {
                     body: formData,
                 });
 
-                if (!response.ok) {
-                    throw new Error(`Yükleme başarısız: ${response.statusText}`);
-                }
+                if (!response.ok) throw new Error("Yükleme başarısız");
 
                 const data = await response.json();
                 setResultUrl(data.url || data.link || data.imageUrl || "URL bulunamadı");
             } catch (err) {
-                setError(err.message || "Bir hata oluştu");
+                setError(err.message);
             } finally {
                 setIsUploading(false);
             }
         };
 
-        const copyToClipboard = () => {
-            if (resultUrl) {
-                navigator.clipboard.writeText(resultUrl);
-            }
-        };
-
-        // MARK: Plugin UI
         return React.createElement("div", { className: "flex flex-col gap-4" },
-            // Description
-            React.createElement("p", { className: "text-sm text-content-muted" },
-                "Bir görsel yükleyin ve paylaşılabilir URL alın."
-            ),
-
-            // File Input Area
             React.createElement("label", {
-                className: "border-2 border-dashed border-outline rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer hover:border-accent-admin transition-colors " + (preview ? "border-accent-admin" : "")
+                className: "border-2 border-dashed border-outline rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer hover:border-accent-admin transition-colors"
             },
-                React.createElement("input", {
-                    type: "file",
-                    accept: "image/*",
-                    onChange: handleFileChange,
-                    className: "hidden"
-                }),
-                preview ? (
-                    React.createElement("img", {
-                        src: preview,
-                        alt: "Preview",
-                        className: "max-h-48 rounded-lg object-contain"
-                    })
-                ) : (
-                    React.createElement("div", { className: "text-center" },
+                React.createElement("input", { type: "file", accept: "image/*", onChange: handleFileChange, className: "hidden" }),
+                preview
+                    ? React.createElement("img", { src: preview, alt: "Preview", className: "max-h-48 rounded-lg object-contain" })
+                    : React.createElement("div", { className: "text-center" },
                         React.createElement("span", { className: "text-4xl mb-2 block" }, "📷"),
                         React.createElement("span", { className: "text-sm text-content-muted" }, "Görsel seçmek için tıklayın")
                     )
-                )
             ),
-
-            // Upload Button
             file && !resultUrl && React.createElement("button", {
                 onClick: handleUpload,
                 disabled: isUploading,
-                className: "w-full py-3 rounded-lg text-sm font-bold text-white cursor-pointer bg-accent-admin hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className: "w-full py-3 rounded-lg text-sm font-bold text-white cursor-pointer bg-accent-admin hover:brightness-110 disabled:opacity-50 transition-all"
             }, isUploading ? "Yükleniyor..." : "Yükle"),
-
-            // Error
             error && React.createElement("p", { className: "text-sm text-red-500 text-center" }, error),
-
-            // Result
             resultUrl && React.createElement("div", { className: "flex flex-col gap-2" },
-                React.createElement("label", { className: "text-xs font-bold text-content-muted uppercase tracking-wider" }, "Görsel URL"),
-                React.createElement("div", { className: "flex gap-2" },
-                    React.createElement("input", {
-                        type: "text",
-                        value: resultUrl,
-                        readOnly: true,
-                        className: "flex-1 px-4 py-3 rounded-lg border text-sm bg-surface-primary border-outline text-content-primary"
-                    }),
-                    React.createElement("button", {
-                        onClick: copyToClipboard,
-                        className: "px-4 py-3 rounded-lg text-sm font-bold cursor-pointer bg-accent-admin text-white hover:brightness-110 transition-all"
-                    }, "📋 Kopyala")
-                ),
-                React.createElement("a", {
-                    href: resultUrl,
-                    target: "_blank",
-                    rel: "noopener noreferrer",
-                    className: "text-xs text-accent-admin hover:underline text-center"
-                }, "Görseli yeni sekmede aç →")
-            ),
-
-            // Reset
-            resultUrl && React.createElement("button", {
-                onClick: () => { setFile(null); setPreview(null); setResultUrl(null); },
-                className: "text-sm text-content-muted hover:text-content-primary transition-colors"
-            }, "Başka bir görsel yükle")
+                React.createElement("input", { type: "text", value: resultUrl, readOnly: true, className: "w-full px-4 py-3 rounded-lg border text-sm bg-surface-primary border-outline text-content-primary" }),
+                React.createElement("button", {
+                    onClick: () => navigator.clipboard.writeText(resultUrl),
+                    className: "w-full py-2 rounded-lg text-sm font-bold cursor-pointer bg-accent-admin/10 text-accent-admin hover:bg-accent-admin/20 transition-all"
+                }, "📋 Kopyala")
+            )
         );
     }
 };
