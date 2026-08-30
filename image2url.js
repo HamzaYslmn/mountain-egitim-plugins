@@ -112,6 +112,14 @@ export const getCropRect = (width, height, zoom = 1, x = 0.5, y = 0.5) => {
     };
 };
 
+// Exported for the self-check beside this plugin: how far a cover-fitted image can travel
+// inside the box. Dividing a pointer delta by this is what makes the drag track the finger
+// exactly, at any zoom, instead of drifting.
+export const panRange = (box, image, zoom = 1) => {
+    const cover = Math.max(box.width / image.width, box.height / image.height) * zoom;
+    return { x: image.width * cover - box.width, y: image.height * cover - box.height };
+};
+
 const cropFile = async (file, zoom, x, y) => {
     const sourceUrl = URL.createObjectURL(file);
     try {
@@ -157,13 +165,15 @@ const uploadCropped = async (file) => {
 
 function ImageUploader({ onSuccess, showResult = false }) {
     const React = window.React;
-    const { useEffect, useState } = React;
+    const { useEffect, useRef, useState } = React;
     const h = React.createElement;
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
     const [zoom, setZoom] = useState(1);
     const [x, setX] = useState(0.5);
     const [y, setY] = useState(0.5);
+    const [size, setSize] = useState(null);   // natural pixels, needed to map a drag to x/y
+    const drag = useRef(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [result, setResult] = useState(null);
@@ -171,12 +181,12 @@ function ImageUploader({ onSuccess, showResult = false }) {
     useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
     const clear = () => {
-        setFile(null); setPreview(null); setZoom(1); setX(0.5); setY(0.5); setError(null); setResult(null);
+        setFile(null); setPreview(null); setSize(null); setZoom(1); setX(0.5); setY(0.5); setError(null); setResult(null);
     };
     const selectFile = (nextFile) => {
         if (!nextFile) return;
         if (!nextFile.type?.startsWith("image/")) return setError("L\u00fctfen bir g\u00f6rsel dosyas\u0131 se\u00e7in.");
-        setFile(nextFile); setPreview(URL.createObjectURL(nextFile)); setZoom(1); setX(0.5); setY(0.5); setError(null); setResult(null);
+        setFile(nextFile); setPreview(URL.createObjectURL(nextFile)); setSize(null); setZoom(1); setX(0.5); setY(0.5); setError(null); setResult(null);
     };
     const submit = async () => {
         if (!file) return;
@@ -188,6 +198,30 @@ function ImageUploader({ onSuccess, showResult = false }) {
         } catch (uploadError) {
             setError(uploadError instanceof Error ? uploadError.message : "Y\u00fckleme ba\u015far\u0131s\u0131z.");
         } finally { setLoading(false); }
+    };
+
+    // Drag to move the crop, across the range panRange() works out.
+    const startDrag = (event) => {
+        if (!size) return;
+        const range = panRange(event.currentTarget.getBoundingClientRect(), size, zoom);
+        drag.current = { px: event.clientX, py: event.clientY, rangeX: range.x, rangeY: range.y };
+        event.currentTarget.setPointerCapture(event.pointerId);
+    };
+    const onDrag = (event) => {
+        if (!drag.current) return;
+        const { px, py, rangeX, rangeY } = drag.current;
+        if (rangeX > 0) setX((value) => clamp(value - (event.clientX - px) / rangeX, 0, 1));
+        if (rangeY > 0) setY((value) => clamp(value - (event.clientY - py) / rangeY, 0, 1));
+        drag.current.px = event.clientX;
+        drag.current.py = event.clientY;
+    };
+    // Arrow keys do the same job for anyone not using a pointer.
+    const nudge = (event) => {
+        const step = { ArrowLeft: [-0.02, 0], ArrowRight: [0.02, 0], ArrowUp: [0, -0.02], ArrowDown: [0, 0.02] }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        setX((value) => clamp(value + step[0], 0, 1));
+        setY((value) => clamp(value + step[1], 0, 1));
     };
 
     if (!preview) return h("label", {
@@ -204,13 +238,35 @@ function ImageUploader({ onSuccess, showResult = false }) {
 
     const position = `${x * 100}% ${y * 100}%`;
     return h("div", { style: { display: "flex", flexDirection: "column", gap: "12px", width: "100%" } },
-        h("div", { className: "rounded-xl border border-outline overflow-hidden bg-black/90", style: { width: "100%", maxWidth: "720px", alignSelf: "center", aspectRatio: "16 / 10", position: "relative" } },
-            h("img", { src: preview, alt: "K\u0131rpma \u00f6nizlemesi", draggable: false, style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: position, transform: `scale(${zoom})`, transformOrigin: position } }),
-            h("span", { className: "text-xs text-white", style: { position: "absolute", left: "10px", bottom: "10px", padding: "4px 8px", borderRadius: "999px", background: "rgba(0,0,0,.6)" } }, "16:10 k\u0131rpma alan\u0131")),
+        h("div", {
+            className: "rounded-xl border border-outline overflow-hidden bg-black/90 cursor-grab active:cursor-grabbing",
+            // touchAction none, or the browser takes the drag as a page scroll on mobile.
+            style: { width: "100%", maxWidth: "720px", alignSelf: "center", aspectRatio: "16 / 10", position: "relative", touchAction: "none" },
+            tabIndex: 0,
+            onPointerDown: startDrag,
+            onPointerMove: onDrag,
+            onPointerUp: () => { drag.current = null; },
+            onPointerCancel: () => { drag.current = null; },
+            onKeyDown: nudge,
+        },
+            h("img", {
+                src: preview, alt: "K\u0131rpma \u00f6nizlemesi", draggable: false,
+                onLoad: (event) => setSize({ width: event.target.naturalWidth, height: event.target.naturalHeight }),
+                style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: position, transform: `scale(${zoom})`, transformOrigin: position },
+            }),
+            // Rule-of-thirds guides, two gradients rather than four divs.
+            h("div", { style: {
+                position: "absolute", inset: 0, pointerEvents: "none",
+                backgroundImage: "linear-gradient(rgba(255,255,255,.28) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.28) 1px, transparent 1px)",
+                backgroundSize: "100% 33.33%, 33.33% 100%",
+            } }),
+            h("span", { className: "text-xs text-white", style: { position: "absolute", left: "10px", bottom: "10px", padding: "4px 8px", borderRadius: "999px", background: "rgba(0,0,0,.6)", pointerEvents: "none" } },
+                "16:10 \u2014 s\u00fcr\u00fckleyerek konumland\u0131r")),
         h("div", { className: "rounded-xl border border-outline bg-surface-primary", style: { padding: "12px", display: "grid", gap: "8px" } },
-            h("label", { className: "text-xs text-content-primary" }, "Yak\u0131nla\u015ft\u0131rma %" + Math.round(zoom * 100), h("input", { type: "range", min: "1", max: String(MAX_ZOOM), step: "0.01", value: zoom, onChange: (event) => setZoom(Number(event.target.value)), style: { width: "100%" } })),
-            h("label", { className: "text-xs text-content-primary" }, "Yatay konum", h("input", { type: "range", min: "0", max: "1", step: "0.01", value: x, onChange: (event) => setX(Number(event.target.value)), style: { width: "100%" } })),
-            h("label", { className: "text-xs text-content-primary" }, "Dikey konum", h("input", { type: "range", min: "0", max: "1", step: "0.01", value: y, onChange: (event) => setY(Number(event.target.value)), style: { width: "100%" } })),
+            // ponytail: zoom stays a slider. Wheel zoom needs a non-passive listener added
+            // by hand, or the page scrolls under the cursor while you use it.
+            h("label", { className: "text-xs text-content-primary" }, "Yak\u0131nla\u015ft\u0131rma %" + Math.round(zoom * 100),
+                h("input", { type: "range", min: "1", max: String(MAX_ZOOM), step: "0.01", value: zoom, onChange: (event) => setZoom(Number(event.target.value)), style: { width: "100%" } })),
             h("button", { type: "button", onClick: () => { setZoom(1); setX(0.5); setY(0.5); }, className: "text-left text-xs text-content-muted hover:text-content-primary cursor-pointer" }, "K\u0131rpmay\u0131 s\u0131f\u0131rla")),
         h("div", { style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px" } },
             h("button", { type: "button", onClick: clear, disabled: loading, className: "py-2.5 rounded-lg text-sm font-semibold border border-outline text-content-secondary hover:bg-surface-tertiary disabled:opacity-50 cursor-pointer" }, "Ba\u015fka g\u00f6rsel se\u00e7"),
@@ -223,7 +279,7 @@ function ImageUploader({ onSuccess, showResult = false }) {
 export default {
     name: "Image2URL",
     description: "G\u00f6rseli k\u0131rp\u0131p \u00fccretsiz CDN URL'i al",
-    version: "4.1.0",
+    version: "4.2.0",
     author: "Anonymous",
     icon: "\ud83d\uddbc\ufe0f",
     slots: ["image-input"],
