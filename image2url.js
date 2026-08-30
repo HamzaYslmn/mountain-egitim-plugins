@@ -95,53 +95,65 @@ const HOSTS = [
 ];
 
 const CROP_ASPECT = 16 / 10;
-const MAX_ZOOM = 3;
+const MIN_CROP = 0.15;                       // of the image width, so the frame stays grabbable
+const HANDLES = ["nw", "ne", "sw", "se"];
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-// Exported for the small no-browser self-check beside this plugin.
-export const getCropRect = (width, height, zoom = 1, x = 0.5, y = 0.5) => {
-    const safeZoom = clamp(Number(zoom) || 1, 1, MAX_ZOOM);
-    const cropWidth = Math.min(width, height * CROP_ASPECT) / safeZoom;
-    const cropHeight = cropWidth / CROP_ASPECT;
-    return {
-        x: (width - cropWidth) * clamp(Number(x) || 0, 0, 1),
-        y: (height - cropHeight) * clamp(Number(y) || 0, 0, 1),
-        width: cropWidth,
-        height: cropHeight,
-    };
+// The crop lives as fractions of the image, so it survives any preview size and becomes
+// source pixels with one multiply. Locking 16:10 in *pixels* is why the height fraction
+// has to carry the image's own aspect ratio.
+// Exported, with applyDrag, for the small no-browser self-check beside this plugin.
+export const fitCrop = ({ x, y, w }, imageAspect) => {
+    const width = clamp(w, MIN_CROP, Math.min(1, CROP_ASPECT / imageAspect));
+    const height = (width * imageAspect) / CROP_ASPECT;
+    return { x: clamp(x, 0, 1 - width), y: clamp(y, 0, 1 - height), w: width, h: height };
 };
 
-// Exported for the self-check beside this plugin: how far a cover-fitted image can travel
-// inside the box. Dividing a pointer delta by this is what makes the drag track the finger
-// exactly, at any zoom, instead of drifting.
-export const panRange = (box, image, zoom = 1) => {
-    const cover = Math.max(box.width / image.width, box.height / image.height) * zoom;
-    return { x: image.width * cover - box.width, y: image.height * cover - box.height };
+// One drag step. No corner means the whole frame moves; a corner resizes and pins the one
+// opposite. The horizontal delta drives the size and the aspect lock supplies the height,
+// so a corner never has to reconcile two directions that disagree with each other.
+export const applyDrag = (start, corner, dx, dy, imageAspect) => {
+    if (!corner) return fitCrop({ x: start.x + dx, y: start.y + dy, w: start.w }, imageAspect);
+    const east = corner.endsWith("e");
+    const sized = fitCrop({ ...start, w: start.w + (east ? dx : -dx) }, imageAspect);
+    return fitCrop({
+        w: sized.w,
+        x: east ? start.x : start.x + start.w - sized.w,
+        y: corner.startsWith("n") ? start.y + start.h - sized.h : start.y,
+    }, imageAspect);
 };
 
-const cropFile = async (file, zoom, x, y) => {
+// The biggest 16:10 frame the image can hold, centred - what you get before touching it.
+const centeredCrop = (imageAspect) => {
+    const { w, h } = fitCrop({ x: 0, y: 0, w: 1 }, imageAspect);
+    return fitCrop({ x: (1 - w) / 2, y: (1 - h) / 2, w }, imageAspect);
+};
+
+const cropFile = async (file, crop) => {
     const sourceUrl = URL.createObjectURL(file);
     try {
         const image = await new Promise((resolve, reject) => {
             const loaded = new Image();
             loaded.onload = () => resolve(loaded);
-            loaded.onerror = () => reject(new Error("G\u00f6rsel okunamad\u0131."));
+            loaded.onerror = () => reject(new Error("Görsel okunamadı."));
             loaded.src = sourceUrl;
         });
-        const crop = getCropRect(image.naturalWidth, image.naturalHeight, zoom, x, y);
-        const outputWidth = Math.max(1, Math.min(1600, Math.round(crop.width)));
+        const sourceWidth = crop.w * image.naturalWidth;
+        const sourceHeight = crop.h * image.naturalHeight;
+        const outputWidth = Math.max(1, Math.min(1600, Math.round(sourceWidth)));
         const outputHeight = Math.max(1, Math.round(outputWidth / CROP_ASPECT));
         const canvas = document.createElement("canvas");
         canvas.width = outputWidth;
         canvas.height = outputHeight;
         const context = canvas.getContext("2d");
-        if (!context) throw new Error("K\u0131rpma alan\u0131 olu\u015fturulamad\u0131.");
-        context.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, outputWidth, outputHeight);
+        if (!context) throw new Error("Kırpma alanı oluşturulamadı.");
+        context.drawImage(image, crop.x * image.naturalWidth, crop.y * image.naturalHeight,
+            sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
 
         const type = file.type === "image/png" ? "image/png" : "image/jpeg";
         const blob = await new Promise((resolve, reject) => {
-            canvas.toBlob((value) => value ? resolve(value) : reject(new Error("G\u00f6rsel k\u0131rp\u0131lamad\u0131.")), type, 0.92);
+            canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Görsel kırpılamadı.")), type, 0.92);
         });
         const name = file.name.replace(/\.[^.]+$/, "") || "gorsel";
         return new File([blob], `${name}.${type === "image/png" ? "png" : "jpg"}`, { type });
@@ -159,7 +171,7 @@ const uploadCropped = async (file) => {
             failures.push(`${host.name}: ${error.message}`);
         }
     }
-    throw new Error("Y\u00fckleme ba\u015far\u0131s\u0131z \u2014 " + failures.join(" \u00b7 "));
+    throw new Error("Yükleme başarısız — " + failures.join(" · "));
 };
 
 
@@ -169,59 +181,63 @@ function ImageUploader({ onSuccess, showResult = false }) {
     const h = React.createElement;
     const [file, setFile] = useState(null);
     const [preview, setPreview] = useState(null);
-    const [zoom, setZoom] = useState(1);
-    const [x, setX] = useState(0.5);
-    const [y, setY] = useState(0.5);
-    const [size, setSize] = useState(null);   // natural pixels, needed to map a drag to x/y
-    const drag = useRef(null);
+    const [size, setSize] = useState(null);   // natural pixels, known once the image loads
+    const [crop, setCrop] = useState(null);   // fractions of the image, null until then
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [result, setResult] = useState(null);
+    const boxRef = useRef(null);
+    const drag = useRef(null);
 
     useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
+    const aspect = size ? size.width / size.height : CROP_ASPECT;
     const clear = () => {
-        setFile(null); setPreview(null); setSize(null); setZoom(1); setX(0.5); setY(0.5); setError(null); setResult(null);
+        setFile(null); setPreview(null); setSize(null); setCrop(null); setError(null); setResult(null);
     };
     const selectFile = (nextFile) => {
         if (!nextFile) return;
-        if (!nextFile.type?.startsWith("image/")) return setError("L\u00fctfen bir g\u00f6rsel dosyas\u0131 se\u00e7in.");
-        setFile(nextFile); setPreview(URL.createObjectURL(nextFile)); setSize(null); setZoom(1); setX(0.5); setY(0.5); setError(null); setResult(null);
+        if (!nextFile.type?.startsWith("image/")) return setError("Lütfen bir görsel dosyası seçin.");
+        setFile(nextFile); setPreview(URL.createObjectURL(nextFile));
+        setSize(null); setCrop(null); setError(null); setResult(null);
     };
     const submit = async () => {
-        if (!file) return;
+        if (!file || !crop) return;
         setLoading(true); setError(null);
         try {
-            const url = await uploadCropped(await cropFile(file, zoom, x, y));
+            const url = await uploadCropped(await cropFile(file, crop));
             onSuccess?.(url);
             if (showResult) setResult(url); else clear();
         } catch (uploadError) {
-            setError(uploadError instanceof Error ? uploadError.message : "Y\u00fckleme ba\u015far\u0131s\u0131z.");
+            setError(uploadError instanceof Error ? uploadError.message : "Yükleme başarısız.");
         } finally { setLoading(false); }
     };
 
-    // Drag to move the crop, across the range panRange() works out.
-    const startDrag = (event) => {
-        if (!size) return;
-        const range = panRange(event.currentTarget.getBoundingClientRect(), size, zoom);
-        drag.current = { px: event.clientX, py: event.clientY, rangeX: range.x, rangeY: range.y };
+    // Drag the frame to move it, a corner to resize it. Deltas are divided by the box, so
+    // they arrive as fractions of the image - the only unit the crop is ever stored in.
+    const startDrag = (corner) => (event) => {
+        event.stopPropagation();
+        drag.current = {
+            corner, start: crop, box: boxRef.current.getBoundingClientRect(),
+            px: event.clientX, py: event.clientY,
+        };
         event.currentTarget.setPointerCapture(event.pointerId);
     };
     const onDrag = (event) => {
-        if (!drag.current) return;
-        const { px, py, rangeX, rangeY } = drag.current;
-        if (rangeX > 0) setX((value) => clamp(value - (event.clientX - px) / rangeX, 0, 1));
-        if (rangeY > 0) setY((value) => clamp(value - (event.clientY - py) / rangeY, 0, 1));
-        drag.current.px = event.clientX;
-        drag.current.py = event.clientY;
+        const held = drag.current;
+        if (!held) return;
+        setCrop(applyDrag(held.start, held.corner, (event.clientX - held.px) / held.box.width,
+            (event.clientY - held.py) / held.box.height, aspect));
     };
-    // Arrow keys do the same job for anyone not using a pointer.
+    // Arrow keys move the frame and +/- resize it, for anyone not using a pointer.
     const nudge = (event) => {
-        const step = { ArrowLeft: [-0.02, 0], ArrowRight: [0.02, 0], ArrowUp: [0, -0.02], ArrowDown: [0, 0.02] }[event.key];
-        if (!step) return;
+        const step = {
+            ArrowLeft: [-0.02, 0, 0], ArrowRight: [0.02, 0, 0], ArrowUp: [0, -0.02, 0],
+            ArrowDown: [0, 0.02, 0], "+": [0, 0, 0.05], "-": [0, 0, -0.05],
+        }[event.key];
+        if (!step || !crop) return;
         event.preventDefault();
-        setX((value) => clamp(value + step[0], 0, 1));
-        setY((value) => clamp(value + step[1], 0, 1));
+        setCrop(fitCrop({ x: crop.x + step[0], y: crop.y + step[1], w: crop.w + step[2] }, aspect));
     };
 
     if (!preview) return h("label", {
@@ -232,45 +248,68 @@ function ImageUploader({ onSuccess, showResult = false }) {
     },
     h("input", { type: "file", accept: "image/*", style: { display: "none" }, onChange: (event) => selectFile(event.target.files?.[0]) }),
     h("span", { style: { fontSize: "24px" } }, "Gorsel"),
-    h("strong", { className: "text-sm text-content-primary" }, "G\u00f6rsel se\u00e7 veya buraya b\u0131rak"),
-    h("span", { className: "text-xs text-content-muted" }, "Y\u00fcklemeden \u00f6nce k\u0131rpabilirsiniz."),
+    h("strong", { className: "text-sm text-content-primary" }, "Görsel seç veya buraya bırak"),
+    h("span", { className: "text-xs text-content-muted" }, "Seçtikten sonra kırpma çerçevesini sürükleyin."),
     error && h("p", { className: "text-xs text-red-500", style: { margin: 0 } }, error));
 
-    const position = `${x * 100}% ${y * 100}%`;
+    const caption = (text, edge) => h("span", {
+        className: "text-xs text-white",
+        style: { position: "absolute", [edge]: "6px", left: 0, right: 0, textAlign: "center", pointerEvents: "none", textShadow: "0 1px 3px #000" },
+    }, text);
+
     return h("div", { style: { display: "flex", flexDirection: "column", gap: "12px", width: "100%" } },
         h("div", {
-            className: "rounded-xl border border-outline overflow-hidden bg-black/90 cursor-grab active:cursor-grabbing",
-            // touchAction none, or the browser takes the drag as a page scroll on mobile.
-            style: { width: "100%", maxWidth: "720px", alignSelf: "center", aspectRatio: "16 / 10", position: "relative", touchAction: "none" },
-            tabIndex: 0,
-            onPointerDown: startDrag,
+            ref: boxRef,
+            className: "rounded-xl border border-outline overflow-hidden bg-black/90",
+            // touchAction none, or a drag on mobile scrolls the page instead of the frame.
+            style: {
+                position: "relative", width: "100%", maxWidth: "720px", alignSelf: "center", touchAction: "none",
+                aspectRatio: size ? `${size.width} / ${size.height}` : "16 / 10",
+            },
             onPointerMove: onDrag,
             onPointerUp: () => { drag.current = null; },
             onPointerCancel: () => { drag.current = null; },
-            onKeyDown: nudge,
         },
             h("img", {
-                src: preview, alt: "K\u0131rpma \u00f6nizlemesi", draggable: false,
-                onLoad: (event) => setSize({ width: event.target.naturalWidth, height: event.target.naturalHeight }),
-                style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: position, transform: `scale(${zoom})`, transformOrigin: position },
+                src: preview, alt: "Kırpma önizlemesi", draggable: false,
+                onLoad: (event) => {
+                    const loaded = { width: event.target.naturalWidth, height: event.target.naturalHeight };
+                    setSize(loaded);
+                    setCrop(centeredCrop(loaded.width / loaded.height));
+                },
+                style: { display: "block", width: "100%", height: "100%" },
             }),
-            // Rule-of-thirds guides, two gradients rather than four divs.
-            h("div", { style: {
-                position: "absolute", inset: 0, pointerEvents: "none",
-                backgroundImage: "linear-gradient(rgba(255,255,255,.28) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.28) 1px, transparent 1px)",
-                backgroundSize: "100% 33.33%, 33.33% 100%",
-            } }),
-            h("span", { className: "text-xs text-white", style: { position: "absolute", left: "10px", bottom: "10px", padding: "4px 8px", borderRadius: "999px", background: "rgba(0,0,0,.6)", pointerEvents: "none" } },
-                "16:10 \u2014 s\u00fcr\u00fckleyerek konumland\u0131r")),
-        h("div", { className: "rounded-xl border border-outline bg-surface-primary", style: { padding: "12px", display: "grid", gap: "8px" } },
-            // ponytail: zoom stays a slider. Wheel zoom needs a non-passive listener added
-            // by hand, or the page scrolls under the cursor while you use it.
-            h("label", { className: "text-xs text-content-primary" }, "Yak\u0131nla\u015ft\u0131rma %" + Math.round(zoom * 100),
-                h("input", { type: "range", min: "1", max: String(MAX_ZOOM), step: "0.01", value: zoom, onChange: (event) => setZoom(Number(event.target.value)), style: { width: "100%" } })),
-            h("button", { type: "button", onClick: () => { setZoom(1); setX(0.5); setY(0.5); }, className: "text-left text-xs text-content-muted hover:text-content-primary cursor-pointer" }, "K\u0131rpmay\u0131 s\u0131f\u0131rla")),
+            crop && h("div", {
+                tabIndex: 0,
+                onPointerDown: startDrag(null),
+                onKeyDown: nudge,
+                style: {
+                    position: "absolute", cursor: "move",
+                    left: `${crop.x * 100}%`, top: `${crop.y * 100}%`,
+                    width: `${crop.w * 100}%`, height: `${crop.h * 100}%`,
+                    outline: "1px solid rgba(255,255,255,.9)",
+                    // One shadow instead of four mask elements: everything outside darkens.
+                    boxShadow: "0 0 0 9999px rgba(0,0,0,.5)",
+                    // Rule-of-thirds guides, two gradients rather than four more elements.
+                    backgroundImage: "linear-gradient(rgba(255,255,255,.3) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.3) 1px, transparent 1px)",
+                    backgroundSize: "100% 33.33%, 33.33% 100%",
+                },
+            },
+                caption("16 : 10", "top"),
+                caption(size ? `${Math.round(crop.w * size.width)} x ${Math.round(crop.h * size.height)}` : "", "bottom"),
+                HANDLES.map((corner) => h("span", {
+                    key: corner,
+                    onPointerDown: startDrag(corner),
+                    style: {
+                        position: "absolute", width: "18px", height: "18px", borderRadius: "4px",
+                        background: "#fff", cursor: `${corner}-resize`, touchAction: "none",
+                        [corner.startsWith("n") ? "top" : "bottom"]: "-1px",
+                        [corner.endsWith("w") ? "left" : "right"]: "-1px",
+                    },
+                })))),
         h("div", { style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px" } },
-            h("button", { type: "button", onClick: clear, disabled: loading, className: "py-2.5 rounded-lg text-sm font-semibold border border-outline text-content-secondary hover:bg-surface-tertiary disabled:opacity-50 cursor-pointer" }, "Ba\u015fka g\u00f6rsel se\u00e7"),
-            h("button", { type: "button", onClick: submit, disabled: loading, className: "py-2.5 rounded-lg text-sm font-semibold text-white bg-accent-admin hover:brightness-110 disabled:opacity-50 cursor-pointer" }, loading ? "Y\u00fckleniyor..." : "K\u0131rp ve y\u00fckle")),
+            h("button", { type: "button", onClick: clear, disabled: loading, className: "py-2.5 rounded-lg text-sm font-semibold border border-outline text-content-secondary hover:bg-surface-tertiary disabled:opacity-50 cursor-pointer" }, "Başka görsel seç"),
+            h("button", { type: "button", onClick: submit, disabled: loading || !crop, className: "py-2.5 rounded-lg text-sm font-semibold text-white bg-accent-admin hover:brightness-110 disabled:opacity-50 cursor-pointer" }, loading ? "Yükleniyor..." : "Kırp ve yükle")),
         error && h("p", { className: "text-xs text-red-500" }, error),
         result && h("div", { style: { display: "flex", gap: "8px" } },
             h("input", { type: "text", value: result, readOnly: true, className: "flex-1 px-3 py-2 rounded-lg border border-outline bg-surface-primary text-sm" }),
@@ -278,10 +317,10 @@ function ImageUploader({ onSuccess, showResult = false }) {
 }
 export default {
     name: "Image2URL",
-    description: "G\u00f6rseli k\u0131rp\u0131p \u00fccretsiz CDN URL'i al",
-    version: "4.2.0",
+    description: "Görseli kırpıp ücretsiz CDN URL'i al",
+    version: "5.0.0",
     author: "Anonymous",
-    icon: "\ud83d\uddbc\ufe0f",
+    icon: "🖼️",
     slots: ["image-input"],
     renderSlot: ({ onValue }) => window.React.createElement(ImageUploader, { onSuccess: onValue }),
     render: () => window.React.createElement(ImageUploader, { showResult: true }),
